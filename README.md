@@ -336,6 +336,28 @@ local_roots = ["C:/MaiBot/data", "C:/MaiBot/temp"]
 Copy-Item config.example.toml config.toml
 ```
 
+### 提示“No module named weflow_maibot_bridge”
+
+这表示项目没有安装进 `.venv`，常见原因是创建虚拟环境后漏掉了 `pip install -e .`。在项目目录运行：
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e .
+```
+
+最新版 `start.bat` 会自动设置源码路径，并在依赖缺失时尝试执行上面的安装命令。通过 ZIP 下载旧版本的用户，请重新下载最新版或执行 `git pull`。
+
+不要在 `C:\Windows\System32` 中手动执行项目命令。先进入项目目录：
+
+```powershell
+cd "C:\Program Files\WeFlow-MaiBot-Bridge"
+```
+
+项目位于 `Program Files` 时，安装或更新可能遇到权限问题。更省事的安装位置是当前用户目录，例如：
+
+```text
+C:\Users\你的用户名\WeFlow-MaiBot-Bridge
+```
+
 ### 提示“weflow.access_token 为空”
 
 在 `config.toml` 填写 Token，或设置环境变量 `WEFLOW_ACCESS_TOKEN`。
