@@ -61,7 +61,11 @@ class Storage:
             )
             db.execute("UPDATE outbox SET state='pending' WHERE state='sending'")
             db.execute("UPDATE outbound_messages SET state='pending' WHERE state='sending'")
-            db.execute("UPDATE inbound_events SET state='pending' WHERE state IN ('processing','buffered')")
+            db.execute("UPDATE inbound_events SET state='pending' WHERE state='processing'")
+            db.execute(
+                "UPDATE inbound_events SET state='pending' WHERE state='buffered' "
+                "AND message_id NOT IN (SELECT message_id FROM pending_mention_media)"
+            )
 
     def mark_seen(self, message_id: str) -> bool:
         with self._lock, self._connect() as db:

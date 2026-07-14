@@ -28,7 +28,7 @@ directory = "data/media"
 max_bytes = 10485760
 download_timeout = 20.0
 max_redirects = 3
-# MaiBot 回复中的本地图片默认禁止。确需启用时填写允许根目录，例如：
+# 本机默认允许 MaiBot 返回任意本地图片路径。需要限制时填写允许根目录，例如：
 # local_roots = ["C:/MaiBot/data"]
 local_roots = []
 

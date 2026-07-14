@@ -44,11 +44,30 @@ class WeFlowClient:
             self.stop()
             await asyncio.gather(worker, return_exceptions=True)
 
+    def check_api(self) -> None:
+        log.info("正在检查 WeFlow API: %s", self.config.base_url)
+        try:
+            response = requests.get(
+                self.config.base_url.rstrip("/") + "/api/v1/messages",
+                params={"limit": 1, "access_token": self.config.access_token},
+                timeout=(self.config.connect_timeout, self.config.connect_timeout),
+            )
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "未知"
+            if status in {401, 403}:
+                raise RuntimeError("WeFlow Access Token 无效") from None
+            raise RuntimeError(f"WeFlow API 返回 HTTP {status}") from None
+        except requests.RequestException:
+            raise RuntimeError("无法连接 WeFlow API，请确认 WeFlow 已启动并开启 API") from None
+        log.info("WeFlow API 检查通过")
+
     def _listen_thread(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> None:
         delay = self.config.retry_min_seconds
         last_event_id: str | None = None
         while not self._stop.is_set():
             try:
+                log.info("正在连接 WeFlow SSE: %s/api/v1/push/messages", self.config.base_url.rstrip("/"))
                 headers = {"Accept": "text/event-stream", "Cache-Control": "no-cache"}
                 if last_event_id:
                     headers["Last-Event-ID"] = last_event_id
@@ -62,18 +81,42 @@ class WeFlowClient:
                 response.raise_for_status()
                 with self._lock:
                     self._response = response
+                log.info("WeFlow SSE 已连接，等待微信消息")
                 parser = SSEParser()
                 delay = self.config.retry_min_seconds
-                for line in response.iter_lines(decode_unicode=True):
+                for line in response.iter_lines(chunk_size=1, decode_unicode=True):
                     if self._stop.is_set():
-                        return
+                        break
+                    # WeFlow historically emits one complete JSON object per data line.
+                    # Handle that immediately instead of waiting for a blank SSE delimiter.
+                    text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+                    if text and text.startswith("data:"):
+                        data_text = text[5:].strip()
+                        try:
+                            json.loads(data_text)
+                        except json.JSONDecodeError:
+                            pass
+                        else:
+                            # Finish a complete one-line WeFlow event immediately,
+                            # while preserving any preceding SSE id/event fields.
+                            parser.feed(line)
+                            event = parser.feed("")
+                            parser = SSEParser()
+                            if event is not None:
+                                if event.id is not None:
+                                    last_event_id = event.id
+                                payload = json.loads(event.data)
+                                if isinstance(payload, dict):
+                                    if event.id is not None:
+                                        payload["_sse_event_id"] = event.id
+                                    payload["_received_at_ns"] = time.time_ns()
+                                    self._put_payload(loop, queue, payload)
+                                continue
                     event = parser.feed(line)
                     if event is None:
                         continue
                     if event.id is not None:
                         last_event_id = event.id
-                    if event.event not in {"message", "wechat-message"}:
-                        continue
                     try:
                         payload = json.loads(event.data)
                     except json.JSONDecodeError:
@@ -83,19 +126,30 @@ class WeFlowClient:
                         if event.id is not None:
                             payload["_sse_event_id"] = event.id
                         payload["_received_at_ns"] = time.time_ns()
-                        future = asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
-                        future.result(timeout=self.config.read_timeout)
+                        self._put_payload(loop, queue, payload)
+                if self._stop.is_set():
+                    break
+                event = parser.feed("")
+                if event is not None:
+                    try:
+                        payload = json.loads(event.data)
+                    except json.JSONDecodeError:
+                        pass
+                    else:
+                        if isinstance(payload, dict):
+                            payload["_received_at_ns"] = time.time_ns()
+                            self._put_payload(loop, queue, payload)
                 raise ConnectionError("WeFlow SSE 流已结束")
             except BaseException as exc:
                 if self._stop.is_set():
-                    return
+                    break
                 log.warning(
                     "WeFlow SSE 断开，%.1f 秒后重连: %s",
                     delay,
                     self._safe_error(exc),
                 )
                 if self._stop.wait(delay + random.uniform(0, delay * 0.2)):
-                    return
+                    break
                 delay = min(self.config.retry_max_seconds, delay * 2)
             finally:
                 with self._lock:
@@ -103,6 +157,20 @@ class WeFlowClient:
                         self._response.close()
                     self._response = None
         loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    def _put_payload(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        queue: asyncio.Queue,
+        payload: dict[str, Any],
+    ) -> None:
+        log.info(
+            "收到微信消息 [%s] %s",
+            payload.get("sourceName") or payload.get("talkerName") or "未知会话",
+            str(payload.get("content") or "[媒体]")[:80],
+        )
+        future = asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
+        future.result(timeout=self.config.read_timeout)
 
     def stop(self) -> None:
         self._stop.set()

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from weflow_maibot_bridge.media import decode_base64_image, read_local_image, validate_image, validate_public_url
+from weflow_maibot_bridge.media import decode_base64_image, read_local_image, validate_image, validate_image_url
 from weflow_maibot_bridge.outbound import parse_outbound_segments
 from weflow_maibot_bridge.storage import Storage
 
@@ -95,15 +95,14 @@ def test_media_magic_mime_size_base64_and_local_root(tmp_path: Path) -> None:
         validate_image(PNG, 2)
     path = tmp_path / "image.png"
     path.write_bytes(PNG)
+    assert read_local_image(str(path), 1024, ()).raw == PNG
     assert read_local_image(str(path), 1024, (tmp_path,)).raw == PNG
     with pytest.raises(ValueError, match="允许目录"):
         read_local_image(str(path), 1024, (tmp_path / "other",))
 
 
-def test_ssrf_rejects_private_address() -> None:
-    resolver = lambda *args, **kwargs: [(2, 1, 6, "", ("127.0.0.1", 80))]
-    with pytest.raises(ValueError, match="非公网"):
-        validate_public_url("http://example.test/image.png", resolver)
+def test_local_image_url_is_allowed() -> None:
+    validate_image_url("http://127.0.0.1:8000/image.png")
 
 
 def test_outbound_segment_order_reply_notify_and_emoji() -> None:

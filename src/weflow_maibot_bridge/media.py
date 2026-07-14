@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import base64
 import binascii
-import ipaddress
 import mimetypes
 import os
-import socket
 import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -75,31 +72,19 @@ def decode_base64_image(value: str, max_bytes: int) -> ValidatedImage:
     return validate_image(raw, max_bytes, content_type)
 
 
-def validate_public_url(url: str, resolver: Callable[..., list] = socket.getaddrinfo) -> None:
+def validate_image_url(url: str) -> None:
     if not isinstance(url, str) or len(url) > 8192:
         raise ValueError("图片 URL 无效或过长")
     parsed = urlsplit(url)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
         raise ValueError("图片 URL 仅支持 HTTP(S)")
-    if parsed.username or parsed.password:
-        raise ValueError("图片 URL 禁止包含用户凭据")
-    try:
-        addresses = resolver(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise ValueError("图片 URL 域名解析失败") from exc
-    if not addresses:
-        raise ValueError("图片 URL 域名没有可用地址")
-    if any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
-        raise ValueError("图片 URL 解析到非公网地址")
 
 
 def read_local_image(path_value: str, max_bytes: int, roots: tuple[Path, ...]) -> ValidatedImage:
     path = Path(path_value).expanduser().resolve(strict=True)
     if not path.is_file():
         raise ValueError("本地图片路径不是文件")
-    if not roots:
-        raise ValueError("本地图片默认禁用，请配置 media.local_roots")
-    if not any(path.is_relative_to(root.resolve()) for root in roots):
+    if roots and not any(path.is_relative_to(root.resolve()) for root in roots):
         raise ValueError("本地图片路径不在允许目录内")
     if path.stat().st_size > max_bytes:
         raise ValueError("本地图片超过尺寸上限")
@@ -116,7 +101,7 @@ class SafeImageDownloader:
         session = requests.Session()
         current = url
         for redirect in range(self.max_redirects + 1):
-            validate_public_url(current)
+            validate_image_url(current)
             response = session.get(
                 current,
                 stream=True,

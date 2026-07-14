@@ -42,6 +42,7 @@ class UIASender:
         self._ready = threading.Event()
         self._startup_error: BaseException | None = None
         self._stopping = threading.Event()
+        self._start_lock = threading.Lock()
 
     def start(self) -> None:
         if self.config.dry_run:
@@ -49,14 +50,27 @@ class UIASender:
             return
         if platform.system() != "Windows":
             raise RuntimeError("UIA 发送仅支持 Windows；非 Windows 验证请配置 uia.dry_run=true")
-        self._thread = threading.Thread(target=self._worker, name="wechat-uia", daemon=True)
-        self._thread.start()
-        if not self._ready.wait(self.config.operation_timeout):
-            self._stopping.set()
-            self._commands.put(None)
-            raise TimeoutError("UIA 初始化超时")
-        if self._startup_error:
-            raise RuntimeError("UIA 初始化失败") from self._startup_error
+        with self._start_lock:
+            if self._thread and self._thread.is_alive() and self._ready.is_set() and not self._startup_error:
+                return
+            if self._thread and self._thread.is_alive():
+                self._stopping.set()
+                self._commands.put(None)
+                self._thread.join(self.config.operation_timeout)
+                if self._thread.is_alive():
+                    raise RuntimeError("旧 UIA 工作线程仍未退出，请重启 Bridge")
+            self._commands = queue.Queue()
+            self._ready.clear()
+            self._startup_error = None
+            self._stopping.clear()
+            self._thread = threading.Thread(target=self._worker, name="wechat-uia", daemon=True)
+            self._thread.start()
+            if not self._ready.wait(self.config.operation_timeout):
+                self._stopping.set()
+                self._commands.put(None)
+                raise TimeoutError("UIA 初始化超时")
+            if self._startup_error:
+                raise RuntimeError("UIA 初始化失败") from self._startup_error
 
     async def send(self, contact: str, kind: str, data: str) -> None:
         if not contact.strip():
@@ -64,6 +78,8 @@ class UIASender:
         if self.config.dry_run:
             log.info("dry-run 微信发送 target=%s kind=%s", contact, kind)
             return
+        if not self._thread or not self._thread.is_alive() or self._startup_error or self._stopping.is_set():
+            await asyncio.to_thread(self.start)
         future: Future[None] = Future()
         self._commands.put(_Command(contact, kind, data, future))
         try:
@@ -97,11 +113,12 @@ class UIASender:
             if window is None:
                 raise RuntimeError("未找到微信 4.x 主窗口，请先启动并登录微信")
             self._ready.set()
-            last_contact = ""
             while not self._stopping.is_set():
                 command = self._commands.get()
                 if command is None:
                     return
+                if command.future.cancelled():
+                    continue
                 started = False
                 try:
                     if not window.Exists(0.5):
@@ -109,9 +126,8 @@ class UIASender:
                     if window is None:
                         raise UIASendError("微信窗口已失效", retry_safe=True)
                     self._activate(window)
-                    if self.config.search_enabled and command.contact != last_contact:
+                    if self.config.search_enabled:
                         self._switch_contact(auto, window, pyperclip, command.contact)
-                        last_contact = command.contact
                     if command.kind == "text":
                         pyperclip.copy(command.data)
                     elif command.kind == "image":
@@ -137,7 +153,11 @@ class UIASender:
                 ctypes.windll.ole32.CoUninitialize()
 
     def _find_window(self, auto):
-        for window in auto.GetRootControl().GetChildren():
+        windows = list(auto.GetRootControl().GetChildren())
+        for window in windows:
+            if str(getattr(window, "ClassName", "")) in {"Qt51514QWindowIcon", "WeChatMainWndForPC"}:
+                return window
+        for window in windows:
             name = str(getattr(window, "Name", ""))
             class_name = str(getattr(window, "ClassName", ""))
             if class_name in {"Chrome_WidgetWin_1", "CabinetWClass"}:
@@ -148,26 +168,42 @@ class UIASender:
 
     @staticmethod
     def _activate(window) -> None:
-        window.SetActive()
-        time.sleep(0.25)
+        import ctypes
+
+        hwnd = int(getattr(window, "NativeWindowHandle", 0) or 0)
+        try:
+            window.SetActive()
+        except Exception:
+            try:
+                window.SwitchToThisWindow()
+            except Exception:
+                pass
+        if hwnd:
+            user32 = ctypes.windll.user32
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            wechat_tid = user32.GetWindowThreadProcessId(hwnd, None)
+            current_tid = ctypes.windll.kernel32.GetCurrentThreadId()
+            attached = bool(user32.AttachThreadInput(current_tid, wechat_tid, True))
+            try:
+                user32.SetForegroundWindow(hwnd)
+                user32.BringWindowToTop(hwnd)
+            finally:
+                if attached:
+                    user32.AttachThreadInput(current_tid, wechat_tid, False)
+        time.sleep(0.3)
         if not window.Exists(0.2):
             raise UIASendError("微信窗口激活后失效", retry_safe=True)
 
     @staticmethod
     def _switch_contact(auto, window, clipboard, contact: str) -> None:
+        auto.SendKeys("{Esc}")
         auto.SendKeys("{Ctrl}f")
-        time.sleep(0.4)
+        time.sleep(0.5)
         auto.SendKeys("{Ctrl}a")
+        time.sleep(0.1)
         clipboard.copy(contact)
         auto.SendKeys("{Ctrl}v")
         time.sleep(0.5)
-        # Search text must be visible before selecting the first result.
-        visible = any(contact == str(getattr(control, "Name", "")) for control in window.GetChildren())
-        if not visible:
-            visible = window.TextControl(searchDepth=12, Name=contact).Exists(0.8)
-        if not visible:
-            auto.SendKeys("{Esc}")
-            raise UIASendError(f"微信搜索结果未验证: {contact}", retry_safe=True)
         auto.SendKeys("{Enter}")
         time.sleep(0.8)
         if not window.Exists(0.2):
@@ -188,7 +224,7 @@ class UIASender:
             "try {[System.Windows.Forms.Clipboard]::SetImage($img)} finally {$img.Dispose()}"
         )
         subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+            ["powershell.exe", "-STA", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
             env=env,
             check=True,
             timeout=10,

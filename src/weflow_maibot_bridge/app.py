@@ -46,9 +46,10 @@ class BridgeApp:
     async def run(self) -> None:
         self._process_lock.acquire()
         try:
+            log.info("WeFlow-MaiBot-Bridge 正在启动")
             self.storage.initialize()
             self.config.media.directory.mkdir(parents=True, exist_ok=True)
-            self.uia.start()
+            await asyncio.to_thread(self.weflow.check_api)
             self._tasks = [
                 asyncio.create_task(self.router.run(), name="router-supervisor"),
                 asyncio.create_task(self.weflow.run(self._receive_weflow), name="weflow-sse"),
@@ -60,6 +61,13 @@ class BridgeApp:
                 asyncio.create_task(self._inbound_worker(), name=f"inbound-{index}")
                 for index in range(self.config.bridge.media_concurrency)
             )
+            try:
+                await asyncio.to_thread(self.uia.start)
+                log.info("微信 UIA 发送器已就绪")
+            except Exception as exc:
+                # Receiving from WeFlow must continue even when the WeChat window
+                # is temporarily unavailable. Outbound sends will retry later.
+                log.warning("微信 UIA 暂未就绪，不影响接收消息: %s", exc)
             done, _ = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_EXCEPTION)
             for task in done:
                 error = task.exception()
@@ -100,7 +108,11 @@ class BridgeApp:
 
     async def _receive_weflow(self, event: dict[str, Any]) -> None:
         message_id = event_message_id(self.config.maibot.platform, event)
-        await asyncio.to_thread(self.storage.enqueue_event, message_id, event)
+        inserted = await asyncio.to_thread(self.storage.enqueue_event, message_id, event)
+        if inserted:
+            log.info("微信消息已进入处理队列 id=%s", message_id[:12])
+        else:
+            log.debug("跳过已处理的重复微信消息 id=%s", message_id[:12])
 
     async def _inbound_worker(self) -> None:
         while True:
@@ -138,6 +150,7 @@ class BridgeApp:
             self.config.bridge.bot_wxid,
         )
         if message is None:
+            log.debug("消息被过滤：自己发送、语音或空消息")
             return False
         if message.chat_type == "group" and self.config.bridge.group_mode == "mention":
             if message.part.type in {"image", "emoji"} and not message.mentioned:
@@ -159,16 +172,22 @@ class BridgeApp:
                         cached_event, self.config.maibot.platform, self._sequence,
                         self.config.bridge.bot_nicknames, self.config.bridge.bot_wxid,
                     )
-                    if cached_message:
+                    if cached_message and cached_message.sender_key == message.sender_key:
                         await self._prepare_media(cached_message)
                         await self.buffer.add(self._buffer_key(cached_message), cached_message)
                         consumed.append(cached_id)
                 await asyncio.to_thread(self.storage.remove_pending_mention_media, consumed)
         if not policy_accept(message, self.config.bridge.group_mode):
+            log.info("群消息未 @ 机器人，已按 mention 模式忽略")
             return False
         if message.part.type in {"image", "emoji"}:
             await self._prepare_media(message)
         await self.buffer.add(self._buffer_key(message), message)
+        log.info(
+            "消息已进入 %.1f 秒合并缓冲 [%s]",
+            self.config.bridge.debounce_seconds,
+            message.session_name,
+        )
         return True
 
     async def _prepare_media(self, message: InboundMessage) -> None:
