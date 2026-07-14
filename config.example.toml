@@ -1,0 +1,52 @@
+# 密钥也可只通过环境变量 WEFLOW_ACCESS_TOKEN 提供。
+[weflow]
+base_url = "http://127.0.0.1:5031"
+access_token = "请替换为 WeFlow Access Token"
+connect_timeout = 5.0
+read_timeout = 45.0
+retry_min_seconds = 1.0
+retry_max_seconds = 30.0
+
+[maibot]
+url = "ws://127.0.0.1:8000/ws"
+platform = "weflow"
+token = ""
+reconnect_max_seconds = 30.0
+
+[bridge]
+bot_nicknames = ["机器人微信昵称"]
+bot_wxid = "wxid_机器人账号"
+# mention: 群内仅处理明确 @；all: 每位成员独立缓冲；batch: 全群共享缓冲并保留成员身份。
+group_mode = "mention"
+debounce_seconds = 3.0
+queue_size = 1000
+media_concurrency = 4
+max_attempts = 10
+
+[media]
+directory = "data/media"
+max_bytes = 10485760
+download_timeout = 20.0
+max_redirects = 3
+# MaiBot 回复中的本地图片默认禁止。确需启用时填写允许根目录，例如：
+# local_roots = ["C:/MaiBot/data"]
+local_roots = []
+
+[caption]
+# off（推荐，直接交给 MaiBot 视觉）、ollama 或 openai（OpenAI 兼容 API）。
+provider = "off"
+base_url = "http://127.0.0.1:11434"
+api_key = ""
+model = "llava"
+prompt = "请用中文简短描述这张图片。"
+timeout = 30.0
+
+[uia]
+# Linux/Termux 只能使用 dry_run；Windows 正式运行必须设为 false。
+dry_run = false
+search_enabled = true
+window_titles = ["微信", "WeChat"]
+operation_timeout = 20.0
+
+[storage]
+database = "data/bridge.sqlite3"

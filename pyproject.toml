@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "weflow-maibot-bridge"
+version = "0.1.0"
+description = "Standalone bidirectional bridge for WeChat 4.x, WeFlow and MaiBot"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "WeFlow-MaiBot-Bridge contributors" }]
+dependencies = [
+  "maim-message==0.7.5",
+  "requests>=2.32,<3",
+  "python-socketio[client]>=5.11,<6",
+  "websocket-client>=1.8,<2",
+  "websockets>=13,<16",
+  "Pillow>=10.4,<12",
+  "uiautomation>=2.0.20; sys_platform == 'win32'",
+  "pyperclip>=1.9; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3,<10", "pytest-asyncio>=0.24,<2"]
+
+[project.scripts]
+weflow-maibot-bridge = "weflow_maibot_bridge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/weflow_maibot_bridge"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
