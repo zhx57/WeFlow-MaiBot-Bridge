@@ -18,9 +18,10 @@ if not exist "config.toml" (
   exit /b 1
 )
 set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
-".venv\Scripts\python.exe" -c "import maim_message, requests, socketio, uiautomation, pyperclip" >nul 2>&1
+".venv\Scripts\python.exe" -c "import maim_message, requests, uiautomation, pyperclip; assert maim_message.__version__ == '0.6.8'" >nul 2>&1
 if errorlevel 1 (
-  echo [INFO] Installing or repairing project dependencies. This may take a few minutes...
+  echo [INFO] Installing compatible dependencies. This may take a few minutes...
+  echo [INFO] MaiBot 1.0.12 requires maim-message 0.6.8. Version 0.7.x causes HTTP 404.
   ".venv\Scripts\python.exe" -m pip install -e .
   if errorlevel 1 (
     echo [ERROR] Dependency installation failed.

@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+import maim_message
 from maim_message import MessageBase, RouteConfig, Router, TargetConfig
 
 from .config import MaiBotConfig
@@ -14,6 +15,12 @@ log = logging.getLogger(__name__)
 
 class RouterService:
     def __init__(self, config: MaiBotConfig, handler: Callable[[MessageBase], Awaitable[None]]) -> None:
+        if maim_message.__version__ != "0.6.8":
+            raise RuntimeError(
+                "MaiBot 1.0.12 需要 maim-message==0.6.8；0.7.x 使用 Socket.IO，"
+                "连接原生 WebSocket /ws 会持续返回 HTTP 404。请运行："
+                "python -m pip install --force-reinstall maim-message==0.6.8"
+            )
         self.config = config
         self.handler = handler
         self.router = self._new_router()

@@ -29,7 +29,7 @@
 | 项目 | 要求 |
 |---|---|
 | 系统 | Windows 10 或 Windows 11 |
-| Python | 3.12 或更高版本 |
+| Python | 3.12 或 3.13，推荐 3.12 |
 | 微信 | 微信桌面版 4.x，已经登录 |
 | WeFlow | 已安装、已登录微信数据，并开启本地 API |
 | MaiBot | 1.0 系列，已能正常调用模型 |
@@ -68,6 +68,7 @@ auth_token = []
 - `nickname` 是 MaiBot 在聊天中使用的名字。
 - `ws_server_port` 默认是 `8000`，不是 MaiBot WebUI 的 `8001`。
 - `auth_token = []` 表示本机连接不启用 token。如果你的 MaiBot 已配置认证，请同步填写本项目的 `maibot.token`。
+- MaiBot 1.0.12 官方使用 `maim-message 0.6.8`。本项目也固定为 `0.6.8`，不要单独升级到 `0.7.x`。
 
 修改后重启 MaiBot。正常情况下，它会在 `127.0.0.1:8000` 提供 maim-message WebSocket 服务。
 
@@ -389,6 +390,27 @@ ws://127.0.0.1:8000/ws
 
 `8000` 是 `[maim_message].ws_server_port`，不是 MaiBot WebUI 的 `8001`。修改 `bot_config.toml` 后必须重启 MaiBot。
 
+如果日志不断出现 HTTP `404`，检查桥接虚拟环境中的 maim-message 版本：
+
+```powershell
+.venv\Scripts\python.exe -c "import maim_message; print(maim_message.__version__)"
+```
+
+MaiBot 1.0.12 对应的正确版本是：
+
+```text
+0.6.8
+```
+
+如果显示 `0.7.x`，执行：
+
+```powershell
+.venv\Scripts\python.exe -m pip install --force-reinstall "maim-message==0.6.8"
+.venv\Scripts\python.exe -m pip install -e .
+```
+
+原因是 `0.6.8` 使用原生 WebSocket `/ws`，而 `0.7.x` 改成了 Socket.IO。Socket.IO 会先发 HTTP polling 请求，连接 MaiBot 1.0.12 的原生 WebSocket 服务时必然得到 404。单纯把 URL 改成 `http://`、删除 `/ws` 或改成 `/socket.io` 都不能解决。
+
 ### MaiBot 收到消息但不回复
 
 检查：
@@ -444,7 +466,7 @@ python -m compileall -q src tests
 
 ## 实现说明
 
-微信侧功能参考 [Akasha-WeChat v1.0.1](https://github.com/alingalingling/Akasha-WeChat/releases/tag/v1.0.1)，MaiBot 通信使用 `maim_message==0.7.5` 的 `Router` 和 `MessageBase`。本项目是独立实现，不复用 Akasha-WeChat 的 OneBot/AstrBot 层，也不复用其他已有微信适配器。
+微信侧功能参考 [Akasha-WeChat v1.0.1](https://github.com/alingalingling/Akasha-WeChat/releases/tag/v1.0.1)，MaiBot 通信使用与 MaiBot 1.0.12 官方依赖一致的 `maim_message==0.6.8`，通过原生 WebSocket `Router` 和 `MessageBase` 交互。本项目是独立实现，不复用 Akasha-WeChat 的 OneBot/AstrBot 层，也不复用其他已有微信适配器。
 
 数据流：
 
@@ -470,7 +492,7 @@ MaiBot 回复
 - WeFlow 或微信更新后可能改变消息字段、媒体接口、窗口标题或快捷键，需要重新验证。
 - 微信 UI 搜索最终依赖显示名；稳定 ID 无法解决两个联系人或群完全同名的问题。
 - 锁屏、远程桌面断开、输入法、企业安全软件等 Windows 环境差异无法通过纯代码完全消除。
-- `maim_message 0.7.5` 的发送成功表示底层发送调用成功，不是 MaiBot 业务处理完成的 ACK。
+- `maim_message 0.6.8` 的发送成功表示底层发送调用成功，不是 MaiBot 业务处理完成的 ACK。
 
 ## 项目结构
 
