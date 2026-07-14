@@ -444,6 +444,16 @@ MaiBot 1.0.12 对应的正确版本是：
 
 检查微信是否锁屏、最小化到异常状态、被其他窗口抢占，以及 PowerShell 是否被企业策略禁用。运行期间不要同时操作微信和剪贴板。
 
+新版发送器会在每次 `Ctrl+F`、粘贴和 Enter 前确认微信确实是前台窗口，并确认焦点属于微信。若 Windows 拒绝切换前台，程序会取消本次按键并输出微信 HWND 和实际前台 HWND，不会把快捷键发到 Bridge 控制台。
+
+如果日志显示：
+
+```text
+UIA 已卡死，请重启 Bridge
+```
+
+说明某次 Windows UIA 调用超过了 `uia.operation_timeout`。Python 线程无法安全中止已经卡住的 Windows COM 调用，因此程序会停止继续操作微信，避免延迟后误发。关闭并重新启动 Bridge 即可恢复，不需要删除数据库。
+
 ### 图片能收到但识别失败
 
 确认 MaiBot 配置了视觉模型，并检查 `[visual]` 配置。也可以临时启用本项目的 Ollama/OpenAI caption。
