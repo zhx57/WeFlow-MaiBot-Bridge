@@ -206,6 +206,8 @@ WeFlow SSE 已连接，等待微信消息
 微信 UIA 发送器已就绪
 ```
 
+启动检查使用 WeFlow 文档规定的 `GET /health`，不会调用要求必填 `talker` 的 `/api/v1/messages`。如果旧版本日志出现 `WeFlow API 返回 HTTP 400`，请更新到最新版。
+
 收到消息时会立即显示：
 
 ```text

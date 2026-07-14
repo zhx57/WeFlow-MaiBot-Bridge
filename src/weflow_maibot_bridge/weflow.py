@@ -48,18 +48,20 @@ class WeFlowClient:
         log.info("正在检查 WeFlow API: %s", self.config.base_url)
         try:
             response = requests.get(
-                self.config.base_url.rstrip("/") + "/api/v1/messages",
-                params={"limit": 1, "access_token": self.config.access_token},
+                self.config.base_url.rstrip("/") + "/health",
                 timeout=(self.config.connect_timeout, self.config.connect_timeout),
             )
             response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or body.get("status") != "ok":
+                raise RuntimeError("WeFlow /health 返回内容异常")
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "未知"
-            if status in {401, 403}:
-                raise RuntimeError("WeFlow Access Token 无效") from None
-            raise RuntimeError(f"WeFlow API 返回 HTTP {status}") from None
+            raise RuntimeError(f"WeFlow /health 返回 HTTP {status}") from None
         except requests.RequestException:
             raise RuntimeError("无法连接 WeFlow API，请确认 WeFlow 已启动并开启 API") from None
+        except ValueError:
+            raise RuntimeError("WeFlow /health 没有返回有效 JSON") from None
         log.info("WeFlow API 检查通过")
 
     def _listen_thread(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> None:

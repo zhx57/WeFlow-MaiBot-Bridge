@@ -21,6 +21,37 @@ class FakeResponse:
     def close(self):
         return None
 
+    def json(self):
+        return {"status": "ok"}
+
+
+def test_weflow_health_check_uses_documented_endpoint_without_talker_or_token(monkeypatch) -> None:
+    config = SimpleNamespace(
+        base_url="http://127.0.0.1:5031", access_token="token",
+        connect_timeout=1, read_timeout=1,
+        retry_min_seconds=0.01, retry_max_seconds=0.01,
+    )
+    client = WeFlowClient(config, SimpleNamespace())
+    request = MockRequest(FakeResponse([]))
+    monkeypatch.setattr("weflow_maibot_bridge.weflow.requests.get", request)
+
+    client.check_api()
+
+    assert request.args[0] == "http://127.0.0.1:5031/health"
+    assert "params" not in request.kwargs
+
+
+class MockRequest:
+    def __init__(self, response):
+        self.response = response
+        self.args = ()
+        self.kwargs = {}
+
+    def __call__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        return self.response
+
 
 async def test_weflow_single_data_line_is_delivered_without_blank_line(monkeypatch) -> None:
     config = SimpleNamespace(
